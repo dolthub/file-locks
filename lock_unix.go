@@ -16,14 +16,19 @@ import (
 // kernel drops the lock when the process dies. (POSIX record locks belong to
 // the process and would do neither.)
 
-// The lock is always taken with LOCK_NB, and waiting is the caller's retry
-// loop: a thread blocked in flock(2) cannot be told the caller gave up.
-func sysLock(f *os.File) (bool, error) {
+// sysLock takes the lock, waiting in the kernel when wait is set. A thread
+// blocked in flock(2) cannot be told the caller gave up, so a wait that has a
+// deadline or a context asks for LOCK_NB and retries instead.
+func sysLock(f *os.File, wait bool) (bool, error) {
+	how := unix.LOCK_EX | unix.LOCK_NB
+	if wait {
+		how = unix.LOCK_EX
+	}
 	var locked bool
 	var lockErr error
 	err := control(f, func(fd uintptr) {
 		for {
-			switch err := unix.Flock(int(fd), unix.LOCK_EX|unix.LOCK_NB); err {
+			switch err := unix.Flock(int(fd), how); err {
 			case nil:
 				locked = true
 				return

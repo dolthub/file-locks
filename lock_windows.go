@@ -16,21 +16,25 @@ import (
 // two Locks in one process exclude each other the same way two processes do,
 // and Windows drops the lock when the process dies.
 //
-// The lock is always taken with LOCKFILE_FAIL_IMMEDIATELY, and waiting is the
-// caller's retry loop. LockFileEx reports completion through the OVERLAPPED's
-// event only when the file was opened for overlapped I/O; on an ordinary
-// handle it blocks until the lock is granted, deadline or no deadline.
+// On an ordinary handle - which is what os.OpenFile returns - LockFileEx
+// blocks until the lock is granted, and the OVERLAPPED's event is signalled
+// only for handles opened for overlapped I/O. That is what an unbounded wait
+// wants and no use at all to a bounded one, which therefore asks for
+// LOCKFILE_FAIL_IMMEDIATELY and retries instead.
 
 // The locked range is one byte past anything a lock file will hold.
 const lockOffsetHigh = 0x80000000
 
 func region() *windows.Overlapped { return &windows.Overlapped{OffsetHigh: lockOffsetHigh} }
 
-func sysLock(f *os.File) (bool, error) {
+func sysLock(f *os.File, wait bool) (bool, error) {
 	var locked bool
 	var lockErr error
 	err := control(f, func(fd uintptr) {
-		flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK | windows.LOCKFILE_FAIL_IMMEDIATELY)
+		flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
+		if !wait {
+			flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
+		}
 		switch err := windows.LockFileEx(windows.Handle(fd), flags, 0, 1, 0, region()); {
 		case err == nil:
 			locked = true

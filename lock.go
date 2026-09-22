@@ -186,7 +186,10 @@ func (l *Lock) acquire(ctx context.Context, deadline time.Time, once bool, busy 
 			return l.contextError(err)
 		}
 
-		ok, err := sysLock(l.f)
+		// Wait in the kernel when nothing could call the wait off, so that
+		// waiters queue there instead of racing each other. A bounded or
+		// cancellable wait cannot: neither platform can interrupt one.
+		ok, err := sysLock(l.f, !once && deadline.IsZero() && ctx.Done() == nil)
 		if err != nil {
 			return l.fail("lock", err)
 		}

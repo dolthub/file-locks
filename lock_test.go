@@ -117,6 +117,29 @@ func TestTimeout(t *testing.T) {
 	}
 }
 
+// An unbounded Lock waits in the kernel, where waiters queue.
+func TestBlockingLock(t *testing.T) {
+	path := tempPath(t)
+	holder, waiter := newLock(t, path), newLock(t, path)
+	if err := holder.Lock(); err != nil {
+		t.Fatal(err)
+	}
+
+	const hold = 50 * time.Millisecond
+	go func() {
+		time.Sleep(hold)
+		holder.Unlock()
+	}()
+
+	start := time.Now()
+	if err := within(t, waiter.Lock); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed < hold {
+		t.Errorf("Lock returned after %v, before the holder let go", elapsed)
+	}
+}
+
 func TestContext(t *testing.T) {
 	path := tempPath(t)
 	holder, waiter := newLock(t, path), newLock(t, path)
