@@ -48,6 +48,21 @@ func newLock(t *testing.T, path string) *Lock {
 	return lck
 }
 
+// within runs fn, failing the test if it does not return soon. A wait that
+// ignores its deadline should fail a test, not hang it.
+func within(t *testing.T, fn func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(30 * time.Second):
+		t.Fatal("the call did not return")
+		return nil
+	}
+}
+
 func TestExclusion(t *testing.T) {
 	path := tempPath(t)
 	a, b := newLock(t, path), newLock(t, path)
@@ -74,7 +89,7 @@ func TestTimeout(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := waiter.LockWithTimeout(40 * time.Millisecond)
+	err := within(t, func() error { return waiter.LockWithTimeout(40 * time.Millisecond) })
 	if err != ErrTimeout {
 		t.Fatalf("LockWithTimeout = %v, want ErrTimeout", err)
 	}
@@ -115,7 +130,7 @@ func TestContext(t *testing.T) {
 		cancel()
 	}()
 
-	err := waiter.LockWithContext(ctx)
+	err := within(t, func() error { return waiter.LockWithContext(ctx) })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("LockWithContext = %v, want context.Canceled", err)
 	}

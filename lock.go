@@ -186,7 +186,7 @@ func (l *Lock) acquire(ctx context.Context, deadline time.Time, once bool, busy 
 			return l.contextError(err)
 		}
 
-		ok, err := sysLock(l.f, !once, ctx, deadline)
+		ok, err := sysLock(l.f)
 		if err != nil {
 			return l.fail("lock", err)
 		}
@@ -216,13 +216,6 @@ func (l *Lock) acquire(ctx context.Context, deadline time.Time, once bool, busy 
 		}
 
 		if once {
-			return busy
-		}
-		if sysWaits {
-			// sysLock waited for us, so the time is up.
-			if err := ctx.Err(); err != nil {
-				return l.contextError(err)
-			}
 			return busy
 		}
 

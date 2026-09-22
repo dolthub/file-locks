@@ -6,9 +6,7 @@
 package fslock
 
 import (
-	"context"
 	"os"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -18,13 +16,9 @@ import (
 // kernel drops the lock when the process dies. (POSIX record locks belong to
 // the process and would do neither.)
 
-// sysWaits is false: a thread blocked in flock(2) cannot be told the caller
-// gave up, so waiting is the caller's retry loop over the non-blocking form.
-const sysWaits = false
-
-// sysLock tries once to take the lock. wait, ctx and deadline are for the
-// windows implementation and unused here.
-func sysLock(f *os.File, wait bool, ctx context.Context, deadline time.Time) (bool, error) {
+// The lock is always taken with LOCK_NB, and waiting is the caller's retry
+// loop: a thread blocked in flock(2) cannot be told the caller gave up.
+func sysLock(f *os.File) (bool, error) {
 	var locked bool
 	var lockErr error
 	err := control(f, func(fd uintptr) {
