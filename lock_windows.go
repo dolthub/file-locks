@@ -27,6 +27,36 @@ const lockOffsetHigh = 0x80000000
 
 func region() *windows.Overlapped { return &windows.Overlapped{OffsetHigh: lockOffsetHigh} }
 
+// sysOpen opens the lock file, creating it if it is not there.
+//
+// This is CreateFile rather than os.OpenFile because a lock file has to stay
+// deletable while it is held: os.OpenFile asks for FILE_SHARE_READ and
+// FILE_SHARE_WRITE only, and without FILE_SHARE_DELETE nobody can remove the
+// lock file, or the directory holding it, until the lock is closed. Go's own
+// (*os.Root).OpenFile shares deletion for the same reason.
+//
+// Nothing is lost by not going through os.OpenFile: handles are not inherited
+// unless asked for, so the close-on-exec care it takes is a unix concern.
+func sysOpen(path string) (*os.File, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(
+		p,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_ALWAYS,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
+
 func sysLock(f *os.File, wait bool) (bool, error) {
 	var locked bool
 	var lockErr error
