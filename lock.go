@@ -268,11 +268,8 @@ func (l *Lock) reopen() error {
 	return err
 }
 
-// openLockFile goes through os.OpenFile, which sets close-on-exec atomically.
-// A descriptor that reached a forked child would keep the lock alive after
-// this process gave it up, because the lock belongs to the open file.
 func openLockFile(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
+	f, err := sysOpen(path)
 	if err != nil {
 		return nil, &Error{Op: "new", Path: path, Kind: Failed, Err: err}
 	}

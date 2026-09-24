@@ -193,6 +193,23 @@ func TestCloseAndMisuse(t *testing.T) {
 	}
 }
 
+// A lock file has to stay deletable while it is held. The directory it sits
+// in belongs to the caller, who may clear it up at any time.
+func TestRemoveWhileHeld(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "LOCK")
+	lck := newLock(t, path)
+	if err := lck.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("removing a held lock file: %v", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("removing the directory of a held lock file: %v", err)
+	}
+}
+
 // A lock on a file that has been unlinked excludes nobody, so taking one must
 // not report success.
 func TestReplacedLockFile(t *testing.T) {
@@ -200,7 +217,7 @@ func TestReplacedLockFile(t *testing.T) {
 	stale := newLock(t, path)
 
 	if err := os.Remove(path); err != nil {
-		t.Skipf("this platform will not remove an open lock file: %v", err)
+		t.Fatalf("removing a held lock file: %v", err)
 	}
 	replacement := newLock(t, path)
 	if err := replacement.TryLock(); err != nil {
