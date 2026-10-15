@@ -1,7 +1,7 @@
 // Copyright 2026 Dolthub, Inc. Licensed under the Apache License, Version 2.0.
 // See the LICENSE file in the root of this repository.
 
-//go:build linux || darwin
+//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
 
 package fslock
 

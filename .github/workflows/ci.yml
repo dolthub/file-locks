@@ -14,3 +14,21 @@ jobs:
           go-version: stable
       - run: go vet ./...
       - run: go test -race ./...
+  # The tests above run on linux, macos and windows; this keeps the four BSDs
+  # compiling (go vet type-checks the tests too) on amd64 and arm64.
+  cross:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [freebsd, openbsd, netbsd, dragonfly]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: dragonfly
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go vet ./...

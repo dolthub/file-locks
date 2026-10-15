@@ -1,6 +1,7 @@
 # file-locks
 
-Exclusive advisory file locks for Go, on linux, darwin and windows.
+Exclusive advisory file locks for Go, on linux, darwin, freebsd, openbsd, netbsd,
+dragonfly and windows.
 
 ```go
 import fslock "github.com/dolthub/file-locks"
