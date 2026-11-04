@@ -12,8 +12,8 @@ import (
 )
 
 // flock(2) locks belong to the open file, not to the process, so two Locks in
-// one process exclude each other the same way two processes do, and the
-// kernel drops the lock when the process dies. (POSIX record locks belong to
+// one process conflict the same way two processes do, and the kernel drops the
+// lock when the process dies. (POSIX record locks belong to
 // the process and would do neither.)
 
 // sysOpen opens the lock file, creating it if it is not there. os.OpenFile
@@ -24,13 +24,16 @@ func sysOpen(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 }
 
-// sysLock takes the lock, waiting in the kernel when wait is set. A thread
+// sysLock takes the lock, shared or exclusive, waiting in the kernel when wait is set. A thread
 // blocked in flock(2) cannot be told the caller gave up, so a wait that has a
 // deadline or a context asks for LOCK_NB and retries instead.
-func sysLock(f *os.File, wait bool) (bool, error) {
-	how := unix.LOCK_EX | unix.LOCK_NB
-	if wait {
-		how = unix.LOCK_EX
+func sysLock(f *os.File, shared, wait bool) (bool, error) {
+	how := unix.LOCK_EX
+	if shared {
+		how = unix.LOCK_SH
+	}
+	if !wait {
+		how |= unix.LOCK_NB
 	}
 	var locked bool
 	var lockErr error

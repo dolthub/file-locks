@@ -13,8 +13,9 @@ import (
 )
 
 // LockFileEx byte-range locks belong to the handle, not to the process, so
-// two Locks in one process exclude each other the same way two processes do,
-// and Windows drops the lock when the process dies.
+// two Locks in one process conflict the same way two processes do, and Windows
+// drops the lock when the process dies. Without LOCKFILE_EXCLUSIVE_LOCK the
+// lock is shared.
 //
 // On an ordinary handle - which is what os.OpenFile returns - LockFileEx
 // blocks until the lock is granted, and the OVERLAPPED's event is signalled
@@ -57,11 +58,14 @@ func sysOpen(path string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
-func sysLock(f *os.File, wait bool) (bool, error) {
+func sysLock(f *os.File, shared, wait bool) (bool, error) {
 	var locked bool
 	var lockErr error
 	err := control(f, func(fd uintptr) {
-		flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
+		var flags uint32
+		if !shared {
+			flags |= windows.LOCKFILE_EXCLUSIVE_LOCK
+		}
 		if !wait {
 			flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
 		}

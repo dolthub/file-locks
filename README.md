@@ -1,6 +1,6 @@
 # file-locks
 
-Exclusive advisory file locks for Go, on linux, darwin, freebsd, openbsd, netbsd,
+Exclusive and shared advisory file locks for Go, on linux, darwin, freebsd, openbsd, netbsd,
 dragonfly and windows.
 
 ```go
@@ -27,7 +27,10 @@ defer lck.Unlock()
 ```
 
 `New`, `Lock`, `TryLock`, `LockWithTimeout`, `Unlock`, `Close`, `ErrLocked` and
-`ErrTimeout` are as they were. `LockWithContext(ctx)` is the one addition.
+`ErrTimeout` are as they were. `LockWithContext(ctx)` is one addition. The other
+is shared mode: `RLock`, `TryRLock`, `RLockWithTimeout` and `RLockWithContext`
+mirror the exclusive calls, and `Unlock` and `Close` release either mode. Any
+number of `Lock`s can hold a file in shared mode while none holds it exclusively.
 
 Every error is an `*fslock.Error` with `IsTimeout()` and `IsTemporary()`
 methods, and matching `fslock.IsTimeout(err)` / `fslock.IsTemporary(err)`
@@ -35,14 +38,16 @@ helpers. `ErrLocked` and `ErrTimeout` are returned as those exact values, so
 `err == fslock.ErrLocked` works alongside `errors.Is`.
 
 The lock is `flock(2)` on unix and `LockFileEx` on windows. Both belong to the
-open file rather than to the process, so two `Lock`s in one process exclude
-each other exactly as two processes do, with no extra bookkeeping, and the
+open file rather than to the process, so two `Lock`s in one process conflict
+exactly as two processes do, with no extra bookkeeping, and the
 kernel releases the lock when the process exits or is killed. A wait is a retry
 loop on unix, where nothing can interrupt `flock(2)`, and a kernel wait on
 windows, where `LockFileEx` can be broken by an event.
 
 Caveats: the lock is advisory; over NFS or SMB the guarantees are only as good
-as the mount, so keep lock files on local storage; waiters are not queued; a
-`Lock` is not recursive. Other platforms do not compile.
+as the mount, so keep lock files on local storage; waiters are not queued, so a
+steady stream of shared holders can keep an exclusive waiter waiting; a `Lock`
+is not recursive and cannot change mode while held. Other platforms do not
+compile.
 
 Apache 2.0.

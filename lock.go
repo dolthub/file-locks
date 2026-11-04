@@ -1,8 +1,8 @@
 // Copyright 2026 Dolthub, Inc. Licensed under the Apache License, Version 2.0.
 // See the LICENSE file in the root of this repository.
 
-// Package fslock takes exclusive advisory locks on files, so that cooperating
-// processes can take turns. It keeps the interface of
+// Package fslock takes exclusive and shared advisory locks on files, so that
+// cooperating processes can take turns. It keeps the interface of
 // github.com/dolthub/fslock, which it replaces.
 package fslock
 
@@ -88,7 +88,8 @@ func IsTemporary(err error) bool {
 
 // A Lock is a handle on one lock file. It may be locked and unlocked any
 // number of times, and is safe for concurrent use. Two Locks on the same file
-// exclude each other whether or not they are in the same process.
+// exclude each other whether or not they are in the same process, unless both
+// are held in shared mode.
 type Lock struct {
 	path string
 	mu   sync.Mutex
@@ -106,31 +107,62 @@ func New(path string) (*Lock, error) {
 	return &Lock{path: path, f: f}, nil
 }
 
-// Lock takes the lock, waiting as long as it takes.
+// Lock takes the lock exclusively, waiting as long as it takes.
 func (l *Lock) Lock() error {
-	return l.acquire(context.Background(), time.Time{}, false, ErrTimeout)
+	return l.acquire(context.Background(), time.Time{}, false, false, ErrTimeout)
 }
 
-// TryLock takes the lock if it is free, and reports [ErrLocked] if it is not.
+// TryLock takes the lock exclusively if it is free, and reports [ErrLocked] if
+// it is not.
 func (l *Lock) TryLock() error {
-	return l.acquire(context.Background(), time.Time{}, true, ErrLocked)
+	return l.acquire(context.Background(), time.Time{}, true, false, ErrLocked)
 }
 
-// LockWithTimeout takes the lock, waiting up to d, and reports [ErrTimeout]
-// if that is not long enough. A d that is not positive means one attempt.
+// LockWithTimeout takes the lock exclusively, waiting up to d, and reports
+// [ErrTimeout] if that is not long enough. A d that is not positive means one
+// attempt.
 func (l *Lock) LockWithTimeout(d time.Duration) error {
 	if d <= 0 {
-		return l.acquire(context.Background(), time.Time{}, true, ErrTimeout)
+		return l.acquire(context.Background(), time.Time{}, true, false, ErrTimeout)
 	}
-	return l.acquire(context.Background(), time.Now().Add(d), false, ErrTimeout)
+	return l.acquire(context.Background(), time.Now().Add(d), false, false, ErrTimeout)
 }
 
-// LockWithContext takes the lock, waiting until ctx is done.
+// LockWithContext takes the lock exclusively, waiting until ctx is done.
 func (l *Lock) LockWithContext(ctx context.Context) error {
-	return l.acquire(ctx, time.Time{}, false, ErrTimeout)
+	return l.acquire(ctx, time.Time{}, false, false, ErrTimeout)
 }
 
-// Unlock releases the lock.
+// RLock takes the lock in shared mode, waiting as long as it takes. Any number
+// of Locks can hold it in shared mode at once, and none of them can hold it
+// while another Lock holds it exclusively. A Lock that holds the lock cannot
+// change mode without releasing it first.
+func (l *Lock) RLock() error {
+	return l.acquire(context.Background(), time.Time{}, false, true, ErrTimeout)
+}
+
+// TryRLock takes the lock in shared mode if no Lock holds it exclusively, and
+// reports [ErrLocked] if one does.
+func (l *Lock) TryRLock() error {
+	return l.acquire(context.Background(), time.Time{}, true, true, ErrLocked)
+}
+
+// RLockWithTimeout takes the lock in shared mode, waiting up to d, and reports
+// [ErrTimeout] if that is not long enough. A d that is not positive means one
+// attempt.
+func (l *Lock) RLockWithTimeout(d time.Duration) error {
+	if d <= 0 {
+		return l.acquire(context.Background(), time.Time{}, true, true, ErrTimeout)
+	}
+	return l.acquire(context.Background(), time.Now().Add(d), false, true, ErrTimeout)
+}
+
+// RLockWithContext takes the lock in shared mode, waiting until ctx is done.
+func (l *Lock) RLockWithContext(ctx context.Context) error {
+	return l.acquire(ctx, time.Time{}, false, true, ErrTimeout)
+}
+
+// Unlock releases the lock, whichever mode it is held in.
 func (l *Lock) Unlock() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -169,7 +201,7 @@ func (l *Lock) Close() error {
 	return nil
 }
 
-func (l *Lock) acquire(ctx context.Context, deadline time.Time, once bool, busy *Error) error {
+func (l *Lock) acquire(ctx context.Context, deadline time.Time, once, shared bool, busy *Error) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -189,7 +221,7 @@ func (l *Lock) acquire(ctx context.Context, deadline time.Time, once bool, busy 
 		// Wait in the kernel when nothing could call the wait off, so that
 		// waiters queue there instead of racing each other. A bounded or
 		// cancellable wait cannot: neither platform can interrupt one.
-		ok, err := sysLock(l.f, !once && deadline.IsZero() && ctx.Done() == nil)
+		ok, err := sysLock(l.f, shared, !once && deadline.IsZero() && ctx.Done() == nil)
 		if err != nil {
 			return l.fail("lock", err)
 		}
