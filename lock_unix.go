@@ -24,6 +24,11 @@ func sysOpen(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 }
 
+// sysStat identifies the file currently named by path without creating it.
+func sysStat(path string) (os.FileInfo, error) {
+	return os.Stat(path)
+}
+
 // sysLock takes the lock, waiting in the kernel when wait is set. A thread
 // blocked in flock(2) cannot be told the caller gave up, so a wait that has a
 // deadline or a context asks for LOCK_NB and retries instead.

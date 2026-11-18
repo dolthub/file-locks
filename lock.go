@@ -251,7 +251,7 @@ func (l *Lock) atPath() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	named, err := os.Stat(l.path)
+	named, err := sysStat(l.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -215,9 +216,45 @@ func TestRemoveWhileHeld(t *testing.T) {
 func TestReplacedLockFile(t *testing.T) {
 	path := tempPath(t)
 	stale := newLock(t, path)
+	var retained *Lock
+	if runtime.GOOS == "windows" {
+		retained = newLock(t, path)
+	}
 
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("removing a held lock file: %v", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		// Retain the deleted handle beyond the old cleanup retry budget.
+		time.Sleep(150 * time.Millisecond)
+		if _, err := New(path); !errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+			t.Fatalf("New(deleted) = %v, want only os.ErrNotExist", err)
+		}
+		if err := stale.TryLock(); !errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+			t.Fatalf("TryLock(deleted) = %v, want only os.ErrNotExist", err)
+		}
+		if err := stale.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := retained.Close(); err != nil {
+			t.Fatal(err)
+		}
+		fresh := newLock(t, path)
+		if err := fresh.TryLock(); err != nil {
+			t.Fatal(err)
+		}
+		if err := fresh.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0444); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(path, 0666) })
+		if _, err := New(path); !errors.Is(err, os.ErrPermission) || errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("New(read-only) = %v, want only os.ErrPermission", err)
+		}
+		return
 	}
 	replacement := newLock(t, path)
 	if err := replacement.TryLock(); err != nil {
