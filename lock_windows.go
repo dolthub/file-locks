@@ -8,6 +8,7 @@ package fslock
 import (
 	"errors"
 	"os"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -27,34 +28,68 @@ const lockOffsetHigh = 0x80000000
 
 func region() *windows.Overlapped { return &windows.Overlapped{OffsetHigh: lockOffsetHigh} }
 
-// sysOpen opens the lock file, creating it if it is not there.
-//
-// This is CreateFile rather than os.OpenFile because a lock file has to stay
-// deletable while it is held: os.OpenFile asks for FILE_SHARE_READ and
-// FILE_SHARE_WRITE only, and without FILE_SHARE_DELETE nobody can remove the
-// lock file, or the directory holding it, until the lock is closed. Go's own
-// (*os.Root).OpenFile shares deletion for the same reason.
-//
-// Nothing is lost by not going through os.OpenFile: handles are not inherited
-// unless asked for, so the close-on-exec care it takes is a unix concern.
+// sysOpen opens a synchronous, non-inheritable lock handle with deletion shared.
+// NtCreateFile distinguishes STATUS_DELETE_PENDING from a genuine permission
+// failure, although CreateFile reports both as access denied.
 func sysOpen(path string) (*os.File, error) {
+	return openWindowsFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_OPEN_IF)
+}
+
+// sysStat reads identity through an existing metadata handle so a deleted file
+// reports a missing name rather than an ambiguous permission error.
+func sysStat(path string) (os.FileInfo, error) {
+	f, err := openWindowsFile(path, windows.FILE_READ_ATTRIBUTES, windows.FILE_OPEN)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	return info, errors.Join(err, f.Close())
+}
+
+var rtlFreeUnicodeString = windows.NewLazySystemDLL("ntdll.dll").NewProc("RtlFreeUnicodeString")
+
+// openWindowsFile preserves native deletion status while keeping normal Go
+// filesystem error matching for other failures. Rtl handles DOS, relative, UNC,
+// and extended paths and allocates the native name that RtlFreeUnicodeString frees.
+func openWindowsFile(path string, access, disposition uint32) (*os.File, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
 	}
-	h, err := windows.CreateFile(
-		p,
-		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_ALWAYS,
-		windows.FILE_ATTRIBUTE_NORMAL,
-		0,
-	)
-	if err != nil {
-		return nil, err
+	var name windows.NTUnicodeString
+	if err := windows.RtlDosPathNameToNtPathName(p, &name, nil, nil); err != nil {
+		return nil, windowsFileError(err)
 	}
-	return os.NewFile(uintptr(h), path), nil
+	defer rtlFreeUnicodeString.Call(uintptr(unsafe.Pointer(&name)))
+	attributes := windows.OBJECT_ATTRIBUTES{
+		Length:     uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})),
+		ObjectName: &name,
+		Attributes: windows.OBJ_CASE_INSENSITIVE,
+	}
+	var handle windows.Handle
+	var result windows.IO_STATUS_BLOCK
+	err = windows.NtCreateFile(&handle, access|windows.SYNCHRONIZE, &attributes, &result,
+		nil, windows.FILE_ATTRIBUTE_NORMAL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		disposition, windows.FILE_SYNCHRONOUS_IO_NONALERT|windows.FILE_NON_DIRECTORY_FILE,
+		0, 0)
+	if err != nil {
+		return nil, windowsFileError(err)
+	}
+	return os.NewFile(uintptr(handle), path), nil
+}
+
+// windowsFileError treats a deleted name as missing while its old handles close.
+// Native status distinguishes this state from genuine permission failures.
+func windowsFileError(err error) error {
+	var status windows.NTStatus
+	if errors.As(err, &status) {
+		if status == windows.STATUS_DELETE_PENDING {
+			return os.ErrNotExist
+		}
+		return status.Errno()
+	}
+	return err
 }
 
 func sysLock(f *os.File, wait bool) (bool, error) {
